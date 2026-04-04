@@ -1,0 +1,100 @@
+# Python related
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyd
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env
+myenv/
+.myenv/
+
+# Distribution / Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+wheelhouse/
+
+# FastAPI / Uvicorn
+*.log
+*.db
+instance/
+.uvicorn.log
+
+# IDEs / Editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Pycharm
+*.iml
+.idea/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Environments
+.env
+.env.*
+.envrc
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Database
+*.sqlite3
+*.db
+
+# Test Coverage
+.coverage
+.tox/
+.nox/
+.pytest_cache/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Celery beat schedule file
+celerybeat-schedule
+
+# Static and media files
+/static/
+media/
+
+# Docker
+docker-compose.yml
+docker-compose.override.yml
+.dockerignore
+
+# pipenv
+Pipfile
+Pipfile.lock
+
+# Poetry
+poetry.lock
+
+# Mypy
+.mypy_cache/
+
+# Pylint
+pylint.log
+
+# Pyright
+pyrightconfig.json
+*.json
