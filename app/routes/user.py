@@ -107,7 +107,7 @@ async def user_reset_password(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    hashed_password = get_password_hash(password.new_password)
+    hashed_password = await get_password_hash(password.new_password)
     await db["users"].update_one({"email": user['email']}, {"$set": {"password": hashed_password}})
 
     return {"message": "Password reset successfully."}

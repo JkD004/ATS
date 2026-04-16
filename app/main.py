@@ -11,6 +11,7 @@ from app.routes.device_data import device_data_router
 from app.routes.devices import device_router
 from app.routes.fence import fence_router
 from app.routes.user import user_router
+from app.db_consumer import database_worker
 
 load_dotenv()
 
@@ -21,11 +22,18 @@ if env == 'Test':
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start the MQTT listener as a background task
+    # Start the MQTT listener and DB worker as background tasks
     mqtt_task = asyncio.create_task(start_mqtt_listener())
+    db_worker_task = asyncio.create_task(database_worker())
+    
     yield  # Yield control back to FastAPI for the application lifecycle
-    # Optionally handle any shutdown logic here
-    mqtt_task.cancel()  # Cancel the MQTT task if needed when FastAPI shuts down
+    
+    # Handle shutdown logic here
+    mqtt_task.cancel()
+    db_worker_task.cancel()
+    
+    # Wait for tasks to be cancelled
+    await asyncio.gather(mqtt_task, db_worker_task, return_exceptions=True)
 
 from fastapi.middleware.cors import CORSMiddleware
 

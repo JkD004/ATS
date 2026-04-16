@@ -19,8 +19,8 @@ import redis
 
 
 # Use your ChirpStack Redis connection details
-redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'),
-                          port=int(os.getenv('REDIS_PORT', 6379)),
+redis_client = redis.Redis(host=os.getenv('REDIS_HOST'),
+                          port=int(os.getenv('REDIS_PORT')),
                           db=int(os.getenv('REDIS_DB', 0)))
 
 # Get log directory from environment variable, default to current directory if not set
@@ -120,8 +120,6 @@ STATE_ACK_WAIT = 7
 #Retransmitting the last packet
 STATE_RETRANSMIT= 8
 
-
-loop = asyncio.get_event_loop()
 class dfu:
     def init_dfu(self):
         self.state = STATE_JOIN
@@ -627,7 +625,7 @@ class dfu:
                     "lat": gps_latti,
                     "long": gps_longi,
                     "battery": batt_capa,
-                    "voltage": batt_volt,
+                    "battery_voltage": batt_volt,
                     "systemtime": sys_uptime / 1000,
                     "gpstime": gps_uptime / 1000,
                     "epotime": epo_time,
@@ -777,7 +775,7 @@ class dfu:
                     "temp": skin_temp / 100,
                     "pressure": ambient_temp / 100,
                     "battery": batt_capa,
-                    "batt_voltage" : batt_volt,
+                    "battery_voltage" : batt_volt,
                     "systemtime": sys_uptime / 1000,
                     "firmware_version": fwv_app1,
                     "data_retrieve_time": rtc_utc.isoformat(),
@@ -1034,7 +1032,7 @@ class dfu:
                     "lat": gps_latti,
                     "long": gps_longi,
                     "battery": batt_capa,
-                    "batt_voltage" : batt_volt,
+                    "battery_voltage" : batt_volt,
                     "systemtime": sys_uptime / 1000,
                     "gpstime": gps_uptime / 1000,
                     "epotime": epo_time,
@@ -1346,6 +1344,7 @@ class dfu:
                 "device_data": {
                     "distance_percentage":(1504 - distance) * 100/1504 ,
                     "battery": batt_capa,
+                    "battery_voltage": batt_volt,
                     "systemtime": sys_uptime / 1000,
                     "firmware_version": fwv_app1,
                     "data_retrieve_time": rtc_utc.isoformat(),

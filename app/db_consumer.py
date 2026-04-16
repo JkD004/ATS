@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 from datetime import timezone
 import requests
 
-
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 
@@ -30,14 +29,24 @@ if not os.path.exists(log_dir):
 
 log_file = os.path.join(log_dir, "database_worker.log")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),  # Logs to console
-        logging.FileHandler(log_file)  # Logs to file
-    ]
-)
+logger = logging.getLogger("database_worker")
+logger.setLevel(logging.INFO)
+
+# Remove existing handlers if any
+if logger.hasHandlers():
+    logger.handlers.clear()
+
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Stream Handler (to console)
+sh = logging.StreamHandler()
+sh.setFormatter(formatter)
+logger.addHandler(sh)
+
+# File Handler (to file)
+fh = logging.FileHandler(log_file)
+fh.setFormatter(formatter)
+logger.addHandler(fh)
 
 # MongoDB connection
 MONGODB_URI = os.getenv("MONGO_URL", 'mongodb://localhost:27017/TestDB')
@@ -47,8 +56,8 @@ db = client[db_name]
 
 # Redis connection
 redis_client = redis.Redis(
-    host=os.getenv('REDIS_HOST', 'localhost'),
-    port=int(os.getenv('REDIS_PORT', 6379)),
+    host=os.getenv('REDIS_HOST'),
+    port=int(os.getenv('REDIS_PORT')),
     db=int(os.getenv('REDIS_DB', 0))
 )
 
@@ -69,7 +78,7 @@ async def store_device_data(devicedataforuser):
             now = datetime.fromisoformat(devicedataforuser["device_data"]["data_retrieve_time"])
             print(f"data_retrieve_time: {now}")
         except Exception as e:
-            logging.error(f"Error getting data_retrieve_time: {e}")
+            logger.error(f"Error getting data_retrieve_time: {e}")
             now = datetime.now(timezone.utc)
         
 
@@ -109,13 +118,14 @@ async def store_device_data(devicedataforuser):
                 "authorization": os.getenv("FAST2SMS")
             }
 
-            response = requests.post(url, data=payload, headers=headers)
+            # Offload blocking SMS request to a background thread
+            response = await asyncio.to_thread(requests.post, url, data=payload, headers=headers)
             
             print(response.json())
             print(f"distance: {distance}")
             print(f"bin_level: {bin_level}")
-            logging.info(f"distance: {distance}")
-            logging.info(f"bin_level: {bin_level}")
+            logger.info(f"distance: {distance}")
+            logger.info(f"bin_level: {bin_level}")
         else:
             distance = 1200
             bin_level = 2000
@@ -199,10 +209,13 @@ async def store_device_data(devicedataforuser):
         devicedatadb = {
             "device_id": device_id,
             "app_id": devicedataforuser["app_id"],
-            "device_data": device_data,
+            "device_data": devicedataforuser["device_data"],
             "payload": devicedataforuser["payload"],
             "created_at": datetime.now(timezone.utc),
         }
+
+        # Insert the device data into the device_data collection for historical history
+        await db["device_data"].insert_one(devicedatadb)
 
         if(type_device == "SENSOR_RADAR_DEVICE_V1"):
             targets = devicedataforuser["device_data"].get("targets", [])
@@ -210,36 +223,30 @@ async def store_device_data(devicedataforuser):
             
             if has_moving_target:
                 await send_firebase_notification_radar_device(device_id, name)
-                logging.info(f"Movement detected for radar device {device_id}, notification sent")
-                        # Insert the device data into the device_data collection
-                await db["device_data"].insert_one(devicedatadb)
-                logging.info(f"Successfully stored data for device {device_id}")
+                logger.info(f"Movement detected for radar device {device_id}, notification sent")
+                logger.info(f"Successfully stored data for device {device_id}")
             else:
-                logging.info(f"No movement detected for radar device {device_id}, Data not stored")
+                logger.info(f"No movement detected for radar device {device_id}, Data not stored")
 
         elif(type_device == "MOTION_DETECTOR_DEVICE_V1" and devicedataforuser["device_data"]["motion"] == 1):
                 await send_firebase_notification_motion_device(device_id, name)
-                logging.info(f"Motion detected for motion device {device_id}, notification sent")
-                # Insert the device data into the device_data collection
-                await db["device_data"].insert_one(devicedatadb)
+                logger.info(f"Motion detected for motion device {device_id}, notification sent")
         
         else:
-            # Insert the device data into the device_data collection
-            await db["device_data"].insert_one(devicedatadb)
-            logging.info(f"Successfully stored data for device {device_id} {type_device}")
+            logger.info(f"Successfully stored data for device {device_id} {type_device}")
 
         if(type_device == "DISTANCE_SENSOR_DEVICE"):
             distance_pct = devicedataforuser["device_data"].get("distance_percentage", 0)
-            logging.info(f"Attempting to send notification for bin device {device_id}, distance: {distance_pct}%")
+            logger.info(f"Attempting to send notification for bin device {device_id}, distance: {distance_pct}%")
             print(f"Attempting to send notification for bin device {device_id}, distance: {distance_pct}%")
             await send_firebase_notification_bin_device(device_id, name, distance_pct)
-            logging.info(f"Bin threshold device {device_id}, notification check completed")
+            logger.info(f"Bin threshold device {device_id}, notification check completed")
 
         return True
     
 
     except Exception as e:
-        logging.error(f"Error storing device data: {e}")
+        logger.error(f"Error storing device data: {e}")
         return False
 
 async def process_queue_item(data):
@@ -250,38 +257,42 @@ async def process_queue_item(data):
         devicedata = json.loads(data)
         await store_device_data(devicedata)
     except Exception as e:
-        logging.error(f"Error processing queue item: {e}")
+        logger.error(f"Error processing queue item: {e}")
 
 async def database_worker():
     """
     Main worker function that continuously processes items from Redis queue
     """
-    logging.info("Database worker started")
+    logger.info("Database worker started")
     
     while True:
         try:
             # Check if there's data in the queue
             # Using BRPOP for reliable queue processing
             # This blocks until data is available
-            logging.info("Checking queue...")
+            logger.info("Checking queue...")
             queue_len = redis_client.llen("device_data_queue")
-            logging.info(f"Queue length: {queue_len}")
-            result = redis_client.blpop("device_data_queue", timeout=0)
+            logger.info(f"Queue length: {queue_len}")
+            
+            # We must run it in a separate thread to avoid blocking the event loop.
+            # Using a 1 second timeout instead of 0 (infinite) to allow clean shutdown during reload
+            result = await asyncio.to_thread(redis_client.blpop, "device_data_queue", 1)
+            
             if result:
                 queue_name, data = result
                 # Process the data
                 await process_queue_item(data)
             else:
-                # No data in queue, wait a bit to avoid tight loop
+                # No data in queue, wait a bit
                 await asyncio.sleep(0.1)
                 
         except redis.exceptions.ConnectionError as e:
-            logging.error(f"Redis connection error: {e}")
+            logger.error(f"Redis connection error: {e}")
             # Wait before retrying
             await asyncio.sleep(5)
             
         except Exception as e:
-            logging.error(f"Unexpected error in database worker: {e}")
+            logger.error(f"Unexpected error in database worker: {e}")
             await asyncio.sleep(1)
 
 async def send_firebase_notification_radar_device(device_id, name):
@@ -312,8 +323,8 @@ async def send_firebase_notification_radar_device(device_id, name):
                     token=fcm_token  # Target this user's device using their FCM token
                 )
 
-                # Send the notification
-                response = messaging.send(message)
+                # Send the notification in a background thread
+                response = await asyncio.to_thread(messaging.send, message)
                 print(f"Successfully sent notification to user {user['_id']}: {response}")
             except Exception as e:
                 print(f"Error sending notification to user {user['_id']}: {e}")
@@ -349,8 +360,8 @@ async def send_firebase_notification_motion_device(device_id, name):
                     token=fcm_token  # Target this user's device using their FCM token
                 )
 
-                # Send the notification
-                response = messaging.send(message)
+                # Send the notification in a background thread
+                response = await asyncio.to_thread(messaging.send, message)
                 print(f"Successfully sent notification to user {user['_id']}: {response}")
             except Exception as e:
                 print(f"Error sending notification to user {user['_id']}: {e}")
@@ -362,13 +373,13 @@ isNotificationSent = False;
 async def send_firebase_notification_bin_device(device_id, name, distance_percentage):
     """Sends a notification via Firebase to all users with the specified device in their 'mydevices' array."""
     try:
-        logging.info(f"send_firebase_notification_bin_device called for device_id: {device_id}, name: {name}, distance: {distance_percentage}%")
+        logger.info(f"send_firebase_notification_bin_device called for device_id: {device_id}, name: {name}, distance: {distance_percentage}%")
         print(f"send_firebase_notification_bin_device called for device_id: {device_id}, name: {name}, distance: {distance_percentage}%")
         
         # Get device to verify it exists
         device = await db["devices"].find_one({"device_id": device_id})
         if not device:
-            logging.error(f"Device {device_id} not found in database")
+            logger.error(f"Device {device_id} not found in database")
             return False
         
         current_time = datetime.now(timezone.utc)
@@ -394,11 +405,11 @@ async def send_firebase_notification_bin_device(device_id, name, distance_percen
         
         users_with_device = await db["users"].find(query).to_list(None)
 
-        logging.info(f"Found {len(users_with_device)} users eligible for notification for device {device_id}")
+        logger.info(f"Found {len(users_with_device)} users eligible for notification for device {device_id}")
         print(f"Found {len(users_with_device)} users eligible for notification for device {device_id}")
 
         if not users_with_device:
-            logging.info(f"No eligible users found for device {device_id}.")
+            logger.info(f"No eligible users found for device {device_id}.")
             print(f"No eligible users found for device {device_id}.")
             return
         
@@ -408,7 +419,7 @@ async def send_firebase_notification_bin_device(device_id, name, distance_percen
             fcm_token = user.get("fcm_token")
             user_bin_threshold = user.get("bin_threshold", 80.0)
             
-            logging.info(f"Sending notification to user {user_id}, threshold: {user_bin_threshold}%")
+            logger.info(f"Sending notification to user {user_id}, threshold: {user_bin_threshold}%")
             print(f"Sending notification to user {user_id}, threshold: {user_bin_threshold}%")
             
             try:
@@ -421,12 +432,12 @@ async def send_firebase_notification_bin_device(device_id, name, distance_percen
                     token=fcm_token
                 )
 
-                logging.info(f"Sending Firebase notification to user {user_id} with token {fcm_token[:20]}...")
+                logger.info(f"Sending Firebase notification to user {user_id} with token {fcm_token[:20]}...")
                 print(f"Sending Firebase notification to user {user_id} with token {fcm_token[:20]}...")
                 
-                # Send the notification
-                response = messaging.send(message)
-                logging.info(f"Successfully sent notification to user {user_id}: {response}")
+                # Send the notification in a background thread
+                response = await asyncio.to_thread(messaging.send, message)
+                logger.info(f"Successfully sent notification to user {user_id}: {response}")
                 print(f"Successfully sent notification to user {user_id}: {response}")
                 
                 # Update notification timestamp for this specific device
@@ -435,18 +446,18 @@ async def send_firebase_notification_bin_device(device_id, name, distance_percen
                     {"_id": user_id},
                     {"$set": {f"notification_sent_at.{device_id}": current_time}}
                 )
-                logging.info(f"Updated notification_sent_at[{device_id}] timestamp for user {user_id}")
+                logger.info(f"Updated notification_sent_at[{device_id}] timestamp for user {user_id}")
                 
             except Exception as e:
-                logging.error(f"Error sending notification to user {user_id}: {e}")
+                logger.error(f"Error sending notification to user {user_id}: {e}")
                 print(f"Error sending notification to user {user_id}: {e}")
     except Exception as e:
-        logging.error(f"Error in send_firebase_notification_bin_device: {e}")
+        logger.error(f"Error in send_firebase_notification_bin_device: {e}")
         print(f"Error in send_firebase_notification_bin_device: {e}")
         return False
 
 
 if __name__ == "__main__":
     # Run the database worker
-    logging.info("Starting database worker process")
+    logger.info("Starting database worker process")
     asyncio.run(database_worker())

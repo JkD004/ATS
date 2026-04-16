@@ -32,18 +32,26 @@ def format_device_data(device: dict) -> dict:
 async def create_device(device: DeviceCreate, current_user: str = Depends(get_current_user)):
     device_check = await db["devices"].find_one({"device_id": device.device_id})
     if device_check:
-        raise HTTPException(status_code=404, detail="Device with this Id already exists")
-    device_data = {
-        "name": device.name,
-        "parameters": device.parameters,
-        "controls": device.controls,
-        "device_id": device.device_id,
-        "created_at": datetime.utcnow(),
-        "updated_at": None,
-        "status": "online",
-        "last_status_update": None
-    }
-    result = await db["devices"].insert_one(device_data)
+        # Check if any user already owns this device
+        owner_check = await db["users"].find_one({"mydevices": device.device_id})
+        if owner_check:
+            raise HTTPException(status_code=400, detail="Device with this ID is already owned by another user")
+        # If it exists but has no owner, we proceed to assign it, but we don't need to insert it again.
+        # We can update it with new metadata from the user if needed, or just let it exist.
+        device_data = device_check
+    else:
+        # New device creation
+        device_data = {
+            "name": device.name,
+            "parameters": device.parameters,
+            "controls": device.controls,
+            "device_id": device.device_id,
+            "created_at": datetime.utcnow(),
+            "updated_at": None,
+            "status": "online",
+            "last_status_update": None
+        }
+        await db["devices"].insert_one(device_data)
 
     updated_devices = list(set(current_user.get("mydevices", []) + [device.device_id]))
 

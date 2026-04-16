@@ -40,6 +40,7 @@ except Exception as e:
     logger.error(f"Failed to connect to MongoDB: {e}")
     raise
 
+
 def serialize_id(id):
     if isinstance(id, ObjectId):
         return str(id)

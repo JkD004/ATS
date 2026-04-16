@@ -1,4 +1,5 @@
 import os
+import asyncio
 from datetime import datetime, timedelta
 from typing import Union
 
@@ -34,14 +35,15 @@ sg = sendgrid.SendGridAPIClient(SENDGRID_API_KEY)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 
-def verify_password(plain_password, hashed_password):
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+async def verify_password(plain_password, hashed_password):
+    return await asyncio.to_thread(bcrypt.checkpw, plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
 
-def get_password_hash(password):
+async def get_password_hash(password):
     pwd_bytes = password.encode('utf-8')
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(pwd_bytes, salt)
+    salt = await asyncio.to_thread(bcrypt.gensalt)
+    hashed = await asyncio.to_thread(bcrypt.hashpw, pwd_bytes, salt)
     return hashed.decode('utf-8')
 
 
@@ -51,7 +53,7 @@ def create_access_token(data: dict, expires_delta: Union[timedelta, None] = None
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -59,6 +61,8 @@ def create_access_token(data: dict, expires_delta: Union[timedelta, None] = None
 def verify_access_token(token: str):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "access":
+            return None
         return payload
     except JWTError:
         return None
@@ -67,6 +71,8 @@ def verify_access_token(token: str):
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
         email: str = payload.get("email")
         if email is None:
             raise HTTPException(status_code=400, detail="Invalid token")
@@ -152,7 +158,8 @@ async def check_location_proximity(devicedataforuser, device):
             # Calculate the distance in meters between incoming and fixed locations
             distance = geodesic(fixed_location, incoming_location).meters
             if distance > device["radius"]:
-                await send_firebase_notification(device["device_id"], device["name"])
+                # Offload blocking proximity check/notification to a background task
+                asyncio.create_task(send_firebase_notification(device["device_id"], device["name"]))
 
     except KeyError as e:
         print(f"Key error: {e} - Missing expected data in device data or location.")
@@ -191,8 +198,8 @@ async def send_firebase_notification(device_id, name):
                     token=fcm_token  # Target this user's device using their FCM token
                 )
 
-                # Send the notification
-                response = messaging.send(message)
+                # Send the notification in a background thread to avoid blocking the event loop
+                response = await asyncio.to_thread(messaging.send, message)
                 print(f"Successfully sent notification to user {user['_id']}: {response}")
             except Exception as e:
                 print(f"Error sending notification to user {user['_id']}: {e}")
@@ -208,13 +215,20 @@ async def send_email(to_email: str, subject: str, body: str):
 
     msg.attach(MIMEText(body, 'html'))
 
-    try:
+    def _send():
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
             server.send_message(msg)
+
+    try:
+        # Offload blocking SMTP call to a background thread
+        await asyncio.to_thread(_send)
         print("Email sent successfully.")
     except Exception as e:
         print(f"Error sending email: {e}")
+        # Note: In a production app, you might not want to throw an HTTPException 
+        # inside a background utility if it's called from a location that doesn't 
+        # expect it, but here we keep the original logic's intent.
         raise HTTPException(status_code=500, detail="Failed to send email")
 
 
@@ -233,7 +247,7 @@ def create_refresh_token(data: dict, expires_delta: timedelta = None):
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "type": "refresh"})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 

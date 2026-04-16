@@ -19,7 +19,7 @@ async def register(user: UserCreate):
     existing_user = await db["users"].find_one({"email": user.email})
     if existing_user:
         raise HTTPException(status_code=400, detail="User already exists")
-    hashed_password = get_password_hash(user.password)
+    hashed_password = await get_password_hash(user.password)
     otp = random.randint(1000, 9999)  # Generate a 4-digit OTP
     user_data = {
         "email": user.email,
@@ -56,7 +56,16 @@ async def verify_user(email: str, otp: int):
     if user['is_active']:
         raise HTTPException(status_code=400, detail="User already verified")
 
+    if user.get('otp') is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+
+    failed_attempts = user.get('otp_failed_attempts', 0)
+    if failed_attempts >= 3:
+        await db["users"].update_one({"email": email}, {"$set": {"otp": None, "otp_failed_attempts": 0}})
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Please request a new OTP.")
+
     if user['otp'] != otp:
+        await db["users"].update_one({"email": email}, {"$inc": {"otp_failed_attempts": 1}})
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
     # Mark the user as verified (active)
@@ -75,7 +84,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         {"$or": [{"email": form_data.username}, {"username": form_data.username}]}
     )
 
-    if not db_user or not verify_password(form_data.password, db_user["password"]):
+    if not db_user or not await verify_password(form_data.password, db_user["password"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     # Create the JWT tokens
@@ -113,10 +122,19 @@ async def reset_password(email: str, otp: int, new_password: str):
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
+    if user.get('otp') is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+
+    failed_attempts = user.get('otp_failed_attempts', 0)
+    if failed_attempts >= 3:
+        await db["users"].update_one({"email": email}, {"$set": {"otp": None, "otp_failed_attempts": 0}})
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Please request a new OTP.")
+
     if user['otp'] != otp:
+        await db["users"].update_one({"email": email}, {"$inc": {"otp_failed_attempts": 1}})
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
-    hashed_password = get_password_hash(new_password)
+    hashed_password = await get_password_hash(new_password)
     await db["users"].update_one(
         {"email": email}, {"$set": {"password": hashed_password, "otp": None, "is_active": True}})
 
@@ -128,11 +146,13 @@ async def reset_password(email: str, otp: int, new_password: str):
 async def refresh_token(refresh_token: str):
     try:
         payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=401, detail="Invalid token type")
         email: str = payload.get("email")
         if email is None:
             raise HTTPException(status_code=400, detail="Invalid token")
     except JWTError:
-        raise HTTPException(status_code=400, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
     user = await db["users"].find_one({"email": email})
     if user is None:

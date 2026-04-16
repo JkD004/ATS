@@ -43,7 +43,10 @@ class UserOut(BaseModel):
     created_at: datetime
     
     class Config:
-        json_encoders = {ObjectId: to_str_id}  # Convert ObjectId to string for JSON output
+        json_encoders = {
+            ObjectId: to_str_id,
+            datetime: lambda v: v.replace(tzinfo=timezone.utc).isoformat() if v.tzinfo is None else v.astimezone(timezone.utc).isoformat()
+        }  # Convert ObjectId to string and serialize date for JSON output
         from_attributes = True
         arbitrary_types_allowed = True  # required for the _id
 
@@ -78,14 +81,14 @@ class DeviceData(BaseModel):
     id: PyObjectId = Field(default_factory=lambda: str(ObjectId()), alias="_id")
     device_id: str
     device_data: Optional[dict] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     class Config:
         populate_by_name = True
         arbitrary_types_allowed = True  # required for the _id
         json_encoders = {
             ObjectId: str,
-            datetime: lambda v: v.astimezone(timezone.utc).isoformat()
+            datetime: lambda v: v.replace(tzinfo=timezone.utc).isoformat() if v.tzinfo is None else v.astimezone(timezone.utc).isoformat()
         }
 
 
@@ -95,7 +98,7 @@ class DeviceCreate(BaseModel):
     device_data: Optional[dict] = None
     parameters: Optional[List[str]] = []
     controls: Optional[List[str]] = []
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     avatar_url: Optional[str] = None
     type_device: Optional[str] = None  # Add type_device field
     lat: Optional[float] = None
@@ -110,7 +113,7 @@ class DeviceUpdate(BaseModel):
     device_settings: Optional[DeviceSettings] = None
     fixed_location: Optional[dict] = None
     radius: Optional[int] = None
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     avatar_url: Optional[str] = None
     type_device: Optional[str] = None
     lat: Optional[float] = None
@@ -140,7 +143,7 @@ class DeviceOut(BaseModel):
         arbitrary_types_allowed = True  # required for the _id
         json_encoders = {
             ObjectId: str,
-            datetime: lambda v: v.astimezone(timezone.utc).isoformat()
+            datetime: lambda v: v.replace(tzinfo=timezone.utc).isoformat() if v.tzinfo is None else v.astimezone(timezone.utc).isoformat()
         }
 
 
@@ -159,8 +162,8 @@ class FenceBase(BaseModel):
 
 class FenceCreate(FenceBase):
     device_ids: Optional[List[str]] = None  # List of device IDs as strings
-    createdAt: Optional[datetime] = Field(default_factory=datetime.utcnow)  # Auto-generate createdAt
-    updatedAt: Optional[datetime] = Field(default_factory=datetime.utcnow)  # Auto-generate updatedAt
+    createdAt: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))  # Auto-generate createdAt
+    updatedAt: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))  # Auto-generate updatedAt
 
 
 class FenceUpdate(BaseModel):
