@@ -15,8 +15,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Load MongoDB URL from environment variable
-MONGO_URL = os.getenv("MONGO_URL", 'mongodb://localhost:27017/DevDB')
-DATABASE_NAME = os.getenv("DATABASE_NAME", 'DevDB')
+# MONGO_URL = os.getenv("MONGO_URL", 'mongodb://localhost:27017/DevDB')
+# DATABASE_NAME = os.getenv("DATABASE_NAME", 'DevDB')
+
+MONGO_URL = os.getenv(
+    "MONGO_URL",
+    "mongodb://admin:admin123@192.168.29.216:27017"
+)
 
 if not MONGO_URL:
     logger.error("MONGO_URL environment variable not set.")
